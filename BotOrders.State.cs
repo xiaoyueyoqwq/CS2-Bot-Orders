@@ -5,93 +5,103 @@ namespace BotOrders;
 internal sealed class RoundTeamState
 {
     public CsTeam Team { get; }
-    public int Rank { get; private set; } = OrderRanks.NoInject;
-    public OrderKind Kind { get; private set; } = OrderKind.None;
-    public Bombsite PrimarySite { get; private set; } = Bombsite.Unknown;
-    public Bombsite OtherSite { get; private set; } = Bombsite.Unknown;
-    public string Source { get; private set; } = "";
+    public Dictionary<ulong, SiteBallot> Ballots { get; } = new();
+    public Dictionary<ulong, float> LastClaimTime { get; } = new();
+    public BombFact Bomb { get; set; } = BombFact.None;
+    public Bombsite ClearSite { get; set; } = Bombsite.Unknown;
+    public Resolution Current { get; private set; } = new(
+        OrderRanks.NoInject,
+        OrderKind.None,
+        Bombsite.Unknown,
+        ResolutionAction.NoInject,
+        AssignAllBots: false,
+        Reason: "init");
     public RosterAssignment? Roster { get; private set; }
-    public HashSet<int> ContactSlots { get; } = new();
-    public HashSet<int> FakeSlots { get; } = new();
     public HashSet<int> PrimarySlots { get; } = new();
-    public Dictionary<int, float> FakeArrivedAt { get; } = new();
-    public bool FakeEmpty { get; set; }
+    public WorldPoint? DroppedOrigin { get; set; }
+
+    public int Rank => Current.Rank;
+    public OrderKind Kind => Current.Kind;
+    public Bombsite PrimarySite => Current.Primary;
+    public Bombsite OtherSite => OrderCommands.Other(Current.Primary);
+    public string Source => Current.Reason;
+    public bool HadAssignment { get; private set; }
 
     public RoundTeamState(CsTeam team)
     {
         Team = team;
     }
 
-    public bool TryAccept(ParsedOrder incoming)
+    public bool TryClaim(ulong steamId, Bombsite site, float now, out string reject)
     {
-        if (incoming.Kind == OrderKind.None)
+        reject = "";
+        if (steamId == 0 || site is not (Bombsite.A or Bombsite.B))
+        {
+            reject = "invalid-claim";
             return false;
-        if (incoming.Site == Bombsite.Unknown
-            && incoming.Kind is OrderKind.GoSite or OrderKind.PlantedAt or OrderKind.SiteClear)
-            return false;
-        if (!OrderCommands.Beats(incoming.Rank, Rank))
-            return false;
-
-        bool siteChanged = incoming.Site != Bombsite.Unknown && incoming.Site != PrimarySite;
-        Rank = incoming.Rank;
-        Kind = incoming.Kind;
-        Source = incoming.Source;
-
-        if (incoming.Kind is OrderKind.GoSite or OrderKind.PlantedAt)
-        {
-            PrimarySite = incoming.Site;
-            OtherSite = OrderCommands.Other(incoming.Site);
-        }
-        else if (incoming.Kind == OrderKind.SiteClear)
-        {
-            PrimarySite = OrderCommands.Other(incoming.Site);
-            OtherSite = incoming.Site;
-        }
-        else if (incoming.Kind == OrderKind.PingBomb && incoming.Site != Bombsite.Unknown)
-        {
-            PrimarySite = incoming.Site;
-            OtherSite = OrderCommands.Other(incoming.Site);
         }
 
-        if (incoming.Rank <= OrderRanks.SiteClear || siteChanged)
+        if (LastClaimTime.TryGetValue(steamId, out float last)
+            && now - last < OrderCommands.ClaimCooldownSeconds)
         {
-            ContactSlots.Clear();
-            FakeArrivedAt.Clear();
-            FakeEmpty = false;
+            if (Ballots.TryGetValue(steamId, out var existing) && existing.Site != site)
+            {
+                reject = "cooldown";
+                return false;
+            }
         }
 
-        if (incoming.Rank <= OrderRanks.SiteClear)
-            FakeSlots.Clear();
-
+        Ballots[steamId] = new SiteBallot(steamId, site);
+        LastClaimTime[steamId] = now;
         return true;
+    }
+
+    public bool ExpireClaim(ulong steamId)
+    {
+        LastClaimTime.Remove(steamId);
+        return Ballots.Remove(steamId);
+    }
+
+    public void ApplyResolution(Resolution resolution, RosterAssignment? roster)
+    {
+        Current = resolution;
+        if (resolution.AssignAllBots)
+            HadAssignment = true;
+        else if (resolution.Action == ResolutionAction.NoInject)
+            HadAssignment = false;
+
+        ApplyRoster(roster ?? OrderRoster.None(0));
     }
 
     public void ApplyRoster(RosterAssignment assignment)
     {
         Roster = assignment;
         PrimarySlots.Clear();
-        FakeSlots.Clear();
         foreach (int slot in assignment.PrimarySlots)
             PrimarySlots.Add(slot);
-        foreach (int slot in assignment.FakeSlots)
-            FakeSlots.Add(slot);
+    }
+
+    public IReadOnlyList<SiteBallot> LiveBallots()
+    {
+        return Ballots.Values.Where(b => b.Site is Bombsite.A or Bombsite.B).ToList();
     }
 
     public void Wipe()
     {
-        Rank = OrderRanks.NoInject;
-        Kind = OrderKind.None;
-        PrimarySite = Bombsite.Unknown;
-        OtherSite = Bombsite.Unknown;
-        Source = "";
+        Ballots.Clear();
+        LastClaimTime.Clear();
+        Bomb = BombFact.None;
+        ClearSite = Bombsite.Unknown;
+        HadAssignment = false;
+        Current = new Resolution(
+            OrderRanks.NoInject,
+            OrderKind.None,
+            Bombsite.Unknown,
+            ResolutionAction.NoInject,
+            AssignAllBots: false,
+            Reason: "wipe");
         Roster = null;
-        ContactSlots.Clear();
-        FakeSlots.Clear();
         PrimarySlots.Clear();
-        FakeArrivedAt.Clear();
-        FakeEmpty = false;
+        DroppedOrigin = null;
     }
-
-    public bool SplitActive =>
-        Rank == OrderRanks.OpeningSplit && FakeSlots.Count > 0 && !FakeEmpty;
 }

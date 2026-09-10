@@ -1,7 +1,7 @@
 # Bot 听从人类指令 — 设计笔记（暂存）
 
 日期：2026-09-10  
-状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。第一期计划已写；第二期插档已锁定。0.1.0 先做监听 / 编制 / wipe / dump，不注入。未上服务器。
+状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。0.1.6：中键一下 = LookAt 有情况；两下警告 `type=13 urgent=true` = LastEnemy + 架枪；不把 ping 写成 Goal。0.1.5：T 持包 Bot 名册排第一，AllGo 不因交火 skip，捡包立刻重算。0.1.4：收集绑 `EventRoundFreezeEnd`（15s 上限）；解冻立刻 flush；静默 5s 只挡已有票的改口，没票的解冻第一下仍收；冻结里有编制先 IgnoreRadio；HuntDropped 用丢包者坐标作后备。0.1.3：解冻后廉价口令静默 5s；同一人改 A/B 无冷却。0.1.2：人类编制压过 Hide/Follow/bot 互喊；死后票保持；接管后同一 SteamID 的轮盘算指挥；A/B 用碰撞盒中心（拒绝 0,0,0）。不写 T 搜点顺序。
 
 方向已经对齐：不重写 Bot AI，也不用 BotController 锁住 WASD 当傀儡。  
 Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判断，而是服从。人类作判断，AI 执行。执行时仍走现有寻路/枪法/搜点，不另写一套走位。
@@ -13,11 +13,11 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 因此：
 
 - 不去做「更好的自动发现炸弹 / 自己决定转点」这类增强。
-- 人类轮盘、标记、无线电一旦构成指令或事实，Bot 按它执行，不拿自己的 CSGameState 旧结论顶回去。
+- **世界事实**（引擎事件、ping 命中包实体）Bot 必须执行，不拿自己的 CSGameState 旧结论顶回去。
+- **廉价口令**（GoA/GoB、Ping Site）只在无人反对时能动全队；有争议时抽不走别人的 Bot。
 - 经济、发枪已经是 BotBuy 自我决策，且比人类快，不在服从范围内。
-- 「绝对服从」指判断权在人类；怎么走到点、怎么架、怎么交火，仍用原有 AI。
-
-开局 3/2 已拍板（A 方案）：人类占主攻名额；假打至少 2 人；主攻人数 > 假打人数。假打点空了立刻会合；假打点有人则留下打、给人类信息。窗口外人类明确改点 → 全员去新点，不再分兵。T/CT 人数规则相同，任务类型不同（Rush vs 堆点/看点），必须按阵营分支，防止用 T 的搜点去驱动 CT。
+- 「绝对服从」指判断权在人类，不是服从每一句轮盘。社区服必须按「有人乱喊」来设计，不按五人开黑。怎么走到点、怎么架、怎么交火，仍用原有 AI。
+- **绝对不能** `Follow` 玩家，除非以后有明确的「跟着我」（限人数，另档）。指挥只是让 Bot 去 Rush/堆 A 或 B。
 
 ---
 
@@ -31,59 +31,104 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 
 ---
 
-## 2. 已确认规则（2026-09-10）
+## 2. 已确认规则（2026-09-10，抗恶意修订）
 
-窗口：从 `round_start` 起 10 秒，**含冻结**。只听人类。回合结束 / 下一局 `round_start` 必须清掉指令和注入的搜索顺序。
+只听本队真人（SteamID）。没开口的真人当自由人，不占票。  
+死人观战不能发新廉价口令，但上一张票保持到回合结束（死后不废票）。同一 SteamID 接管 Bot 后再按 V/C/Z 算新票。Bot 自己的脑发出的 radio / 「跟着我」不当指挥官。  
+有人类编制时 bot 的 `IgnoreRadio` 打开、`IsFollowing=false`、Hurry+MustRun，不能用互喊改走位。无人类编制时恢复原生 Teamwork。  
+回合结束 / 下一局 `round_start` 清空票、包事实、编制、注入。
 
-### 2.1 编制（T/CT 相同）
+默认威胁模型：同一队里会有人乱喊、空喊、对着干。不检测谁是 troll，不记黑名单。结构上让廉价口令没法抢走全队。
 
-- 人类占主攻/堆点名额，不占假打名额。
-- 假打/看点组 **至少 2 人**（人数不够时见下）。
-- 主攻组人数 **必须大于** 假打组。
-- 5 人局（1 人 + 4 bot）= **A 方案**：人类 + 2 bot 主攻（3），2 bot 假打/看点。
-- 推算：`fake = min(max(2, floor(n*0.4)), floor((n-1)/2))`，且 `n - fake > fake`；`n < 4` 时不拆，全员主攻（无法同时满足「假打≥2」和「主攻>假打」）。
-- T 的 C4 必须在主攻组。CT 无此条。
+### 2.1 开局收集（冻结）+ 随后静默 5s
 
-### 2.2 优先级（后到且更明确的覆盖前面）
+竞技购买就在冻结里。收集跟 `EventRoundFreezeEnd`，不跟死的 `round_start+15s`（15s 只在冻结事件没来时封顶）。冻结期内的侦测 A/B **要收下**，不能当静默丢掉。
 
-1. 回合结束 → 清空，禁止带进下一局。
-2. 人类明确改点（窗口外 GoA/GoB / Ping Site）→ **全员去新点，不再分兵**。战场在变，AI 始终跟最后一次明确指令。
-3. 已安放 / Ping 炸弹 / PlantedAt* / wePlanted → 全员按该点（CT 回防；T 守包，除非人类又明确改点）。
-4. 点已清 / 区域安全 → 离开该点，去另一点或当前主攻点。不要在空点发呆。
-5. 开局 10 秒内的 3/2 分配：主攻去指定点；假打/看点去另一点。
-6. 假打/看点组 **摸到人 → 留下打**，给人类信息；**没人 → 立刻会合主攻点**。
-7. 10 秒内无任何 A/B 指令 → 不注入，各自作战。
+| 段 | 时钟 | 廉价口令 | 注入 |
+| --- | --- | --- | --- |
+| 开局等指令 | `round_start` → `round_freeze_end` | 记账；同一人可立刻改 A/B | 不写 Goal（还冻着）；有编制则先 IgnoreRadio + 清 Follow；解冻瞬间 flush |
+| 无线电静默 | 解冻后 5s | 队里已有票：忽略改口；**没票：解冻第一下仍收下** | 保持 / 没票的第一下立刻注入 |
+| 之后 | 解冻 +5s 之后 | 再接受，走仲裁；同一人可立刻改 A/B | 立刻注入 |
 
-窗口内改口（先 A 后 B）：只改 3/2 的主攻点，重新分配，最后一次为准。  
-窗口外改口：第 2 条，全员转，拆掉假打。
+世界事实（下包 / ping 中包 / CT 地上的包）各段都听。开局 3/2 退役。无争议 Go A/B = 全员该点。`round_end` 之后到下一局 `round_start` 之前的包事件丢掉。
 
-### 2.3 T（进攻）
+### 2.2 信号分级
 
-开局喊 A：3 人 Rush A，2 人 fake B。  
-B 空 → 2 人立刻回 A。B 有人 → 2 人留下打。  
-人类后来说转 A / Ping A：包括正在 B 交火的人，**全员去 A**。  
-下包事实覆盖搜点；人类再喊另一点则放弃当前目标全员过去。
+事实决定「世界是什么样」；口令只在没有争议时能动全队。Go A/B 永远不是事实。
 
-### 2.4 CT（防守）— 已拍板
+| 级别 | 例子 | 伪造 | 能动全队 |
+| --- | --- | --- | --- |
+| 世界事实 | `bomb_planted`；地上 `weapon_c4`；ping 命中 `weapon_c4`/`planted_c4` | 不能 | 能。目标是包的坐标/已下的点 |
+| 已验证清点 | Clear 且喊的人 `LastPlaceName` 硬归属该点，且包不在这 | 难 | 只能把人从该点叫走 |
+| 廉价口令 | GoA/GoB（V 盘 / Z 无线电） | 按一下 | 仅无人反对（全票同一点或 2-1+） |
+| 标点信息 | 中键一下 / 两下警告 | 按一下 | **不能**。一下 LookAt「有情况」；两下 `type=13` LastEnemy「有人、架枪」。不写 Goal |
+| 口头假事实 | wePlanted、PlantedAt*、DroppedBomb、BombAt、PickedUpC4 无线电 | 按一下 | **忽略**，只认事件和实体 |
 
-人数与 T 相同，**任务不是 Rush**：
+注入「包在这个坐标」和「全员强制走过去」不是同一件事：
 
-- 开局喊 A：3 人 **堆/守 A**，2 人 **看 B**（不是假打进点）。
-- 看 B 空 → 立刻回 A 会合，禁止 CT 在空 B 继续蹲。
-- 看 B 有人 → 留下打，给人类信息（B 有人/要打 B）。
-- 窗口外人类明确 GoA/GoB：全员去该点（转点/回防），不再留人看另一点。
-- 包已下 / Ping 炸弹：全员去下包点。BotAI 引擎事件仍有效；人类在蜂鸣前的 ping 必须同样生效。
-- 人类 Clear 某点（包未下）：离开该点去另一点。
-- 开局无指令：不注入，Valve 默认分点。
-- **不要**把 T 的「搜点去下包」搜索顺序套到 CT，否则 CT 会像进攻方一样往点里 Rush。
+- 已下包 / ping 命中包实体 / **CT** 见到地上的包 → 一期仍 HuntDropped 写包坐标。**代办（AI 审查）**：附近防守，不要钉在实体旁盯着看。这不是 BotOrders 的 Goal 能解决的。
+- **T 自己把包扔角落** → 记事实，**不**全员集结（否则丢包 = 最高权限指挥）。
+- 中键标点不是选点：`PlaceName` 是 BombsiteA/B 也不升成 GoSite。走位只认轮盘/无线电。
 
-### 2.5 第一期范围
+### 2.3 按人记账（不是投票、不是 last-wins）
 
-做：开局 3/2（T Rush + CT 堆/看）、空点会合、接触留下、窗口外全员改点、下包/点已清/Ping 炸弹、回合清空。  
-第二期等第一期实测后再做。  
-第一期不做：团队聊天「打A/打B」、要手雷、人质图、BotBuy、Hold。
+每个真人只保留最后一张 A/B 票（SteamID 去重）。连按不叠票。先 A 后 B 是改自己的票。  
+没有倒计时，玩家不需要知道有「投票系统」。
 
-优先级表可随时插档，不必重写第一期。第二期（跟随/支援/中路/敌人 ping）只是在这张有序表里加一行：例如 Follow 低于「明确改点」但高于开局 3/2；NeedBackup 只拉 1–2 个空闲 Bot，不拆掉主攻点。新指令开工时再定档位。
+同一人改 A/B 无间隔（冷却 0）。静默 5s 内廉价口令仍忽略。  
+断线 / 离开 T/CT → 废票，立即重算。死亡不废票；接管后同一 SteamID 可改票。
+
+活票结算（`OrderArbitration.Resolve`）：
+
+1. 已下包且点已知 → 全员该点。
+2. ping 命中包实体 → 有硬 A/B 则全员该点；否则 Hunt 包坐标（不猜 A/B）。
+3. 地上有包且 CT → 全员 HuntDropped。
+4. T 地上有包 → 不 Rally，继续口令结算。
+5. 活票 0 → 不注入。
+6. 全票同一点（1 个真人也算）→ 全员该点。这是主场景（1 人 + 4 Bot）。
+7. 2-1 及以上 → 多数点全员去。两人同意，第三人拦不住。
+8. **1-1 不对半分**（恶意指挥主战场）：
+   - T：持包的 **真人** 若有票，该点全员去。
+   - 否则 / CT：有上一拍编制则保持；没有则不注入（自由）。
+9. 后开口抽不走已经在执行的 Bot。整表重算，不是后到覆盖。
+
+两人齐心喊同一点：全员去。对着干：编制停住或按 C4 走，不给捣乱的人分一半 Bot。
+
+### 2.4 档位（间隔 10，第二期仍可插）
+
+数字越小越优先。调度器只认结算后的一档。
+
+| 档 | 名 | 第一期 |
+| --- | --- | --- |
+| 0 | RoundWipe | 回合清空 |
+| 10 | FollowMe | 空档。第二期：限人数、只拉自己编制、不能压过已下包 |
+| 20 | BombFact | 见 2.2 世界事实 |
+| 30 | SiteClear | 已验证清点；15s 内当战术口令忽略 |
+| 40 | SiteClaim | 15s 后廉价选点，经仲裁 |
+| 50 | （空） | NeedBackup 等 |
+| 60 | NoInject | 无票 / 1-1 破不了 / 静默期 |
+
+### 2.5 地点硬归属
+
+引擎没有「含外围的 A 区」。两套对不齐：`func_bomb_target`（能下包的触发体）和 `LastPlaceName`（导航地名）。
+
+- 硬 A/B：在对应 `func_bomb_target` 内，或 `LastPlaceName` 解析为 BombsiteA/B。
+- 边缘 / 中路 / 斜坡 / 通道：Unknown。**不要**用「离哪个点中心更近」。
+- 伤亡：记 `place=` 和硬归属，**第一期不改编制**。死在 A 可能是假打或转点被黑，是推断不是事实。
+
+### 2.6 T / CT
+
+人数规则相同，任务不同。禁止把 T 的搜点顺序套到 CT。
+
+- T：无争议 Go A → 全员 Rush A。带着 `weapon_c4` 的 **Bot** 必须进这编制（名册第一、交火不 skip Goal），不能让持包的去乱走。C4 在真人身上时，1-1 破平用持包人的票。T 丢在地上的包不 Rally。
+- CT：无争议 Go A → 全员堆/转 A（不是假打进点）。1-1 不注入或保持上一拍。包已下 / ping 到包 / 地上的包 → 全员去。Clear 某点（包未下、硬归属）→ 离开该点。
+
+### 2.7 第一期范围
+
+做：冻结收集、解冻后 5s 静默（没票仍收第一下）、按人记账、事实优先、1-1/多数/持包破平、已验证 Clear、回合清空。  
+不做：GameState 写入（等 `libserver.so` dump）、开局 3/2、假打会合、接触留下改编制、按伤亡改编制、`Follow` 玩家、团队聊天「打A/打B」、要手雷、人质图、BotBuy、Hold、投票倒计时、troll 黑名单。
+
+第二期插档：FollowMe ≈ 10（限人数）；NeedBackup ≈ 50（只拉空闲 Bot）。新指令开工时再定档位。
 
 ---
 
@@ -94,7 +139,7 @@ B 空 → 2 人立刻回 A。B 有人 → 2 人留下打。
 1. **世界事实**  
    已安放点、最后敌人位置、掉包、听到的噪音 → `CSGameState` / `CCSBot` 的 LastEnemy / Noise / planted site。
 2. **战术意图**  
-   开局搜索顺序、Clear 某点、Follow、Hold。不要只写 `GoalPosition`：Idle 会按旧搜索顺序重选目标。写完后可能需要 `Idle()` / `RepathTimer`，让正在 Hide/Guard 的 Bot 重新规划。
+   开局搜索顺序、Clear 某点、Follow、Hold。不要只写 `GoalPosition`：Idle 会按旧搜索顺序重选目标。0.1.4 冻结里有编制先 IgnoreRadio + 清 Follow，解冻才写 Goal + 过期 `RepathTimer` + `MustRunTimer`/`HurryTimer`。不写 T 搜点顺序。目标点用 `func_bomb_target` 碰撞盒中心，拒绝 `(0,0,0)`。HuntDropped 先找地上的 `weapon_c4`，没有则用丢包者坐标。
 
 BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T 搜已知安放点、CT 全局听蜂鸣/捡包。  
 它不消费人类的 ping / 轮盘。剩下的缺口正好是：
@@ -121,7 +166,7 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 
 已知冲突：
 
-- `Idle_IsSafeAlwaysFalse` 会顶「守住这个位置」，但对开局 3/2 有利（Bot 会离开出生点）。
+- `Idle_IsSafeAlwaysFalse` 会顶「守住这个位置」，但对离开出生点有利。
 - BotState `OnTick` 目前不覆盖 Follow / Goal / Radio。
 - NadeSystem 区域接管可能和转点打架。
 - `botprofile` Teamwork 40–100 只在走原生无线电响应时才有意义。
@@ -132,13 +177,13 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 
 ## 4. CS2 现在人类怎么发指令
 
-三套并行，插件都要听，不能只认轮盘。
+三套并行。**V/C 轮盘和 Z 无线电是两条通道**，不是同一件事：轮盘走命令 `playerchatwheel CW.*`，Z 走游戏事件 `player_radio`。插件两条都听，都不拦截。默认「侦测 A/B」在 **V 盘**，不在 Z 菜单。
 
-| 通道 | 默认键 | 服务端事件 | 备注 |
+| 通道 | 默认键 | 服务端入口 | 备注 |
 | --- | --- | --- | --- |
-| 快捷轮盘 1/2/3 | `C`=`+radialradio`，`V`=`+radialradio2`，`+radialradio3` 常未绑定 | `playerchatwheel CW.*` + `EventPlayerRadio` | 每页 8 格，可自定义 |
-| 经典无线电菜单 | `Z`=`radio`，另有 `radio1`/`radio2`/`radio3` | `EventPlayerRadio` Slot | `go_a`/`go_b` 在 CS2 上常失效 |
-| 准星标记 | 鼠标中键 `player_ping` | `EventPlayerPing` / `CPlayerPing` | 打在准星处；轮盘里的 A/B/中路/炸弹是静音 ping |
+| 快捷轮盘 1/2/3 | `C`=`+radialradio`，`V`=`+radialradio2`，`+radialradio3` 常未绑定 | `playerchatwheel CW.*`（另 dump `chatwheel_ping`） | 每页 8 格，可自定义。GoA/GoB 常静音，不发 `player_radio` |
+| 经典无线电菜单 | `Z`=`radio`，另有 `radio1`/`radio2`/`radio3` | `EventPlayerRadio` Slot | `go_a`/`go_b` 在 CS2 上常失效。Slot 表等实机 dump，不猜 |
+| 准星标记 | 鼠标中键 `player_ping` | `EventPlayerPing` / `CPlayerPing` | 打在准星处；轮盘 A/B 也可能再丢一个静音 ping |
 
 玩家可把任意 `#Chatwheel_*` 绑到三页轮盘。默认页只是常用子集，完整指令表比默认 24 格大得多。  
 `sv_playerradio_use_allowlist` 默认 1：旧 CS:GO `playerradio Radio.Loc*` 地点喊话默认被拦，私服关掉才通。
@@ -198,7 +243,7 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 
 `CW.GoA` / `CW.GoB` / `CW.GoToLocMid` / `CW.BombAt` 多数情况下**不说话**，只在对应位置丢标记。  
 人类说「打 B」时，实际发出的经常是「Ping Site B」，不是经典 `go_b`。  
-开局 3/2 必须认这几条，不能只等有语音的 `GoGoGo`。
+15 秒后的选点必须认这几条，不能只等有语音的 `GoGoGo`。
 
 另有 `chatwheel_ping #Chatwheel_*`：部分指令会在自己头上或准星处再打一个 ping（Follow me / On my way / Rotate to me / Enemy spotted）。
 
@@ -233,7 +278,7 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 | OMW | onmyway | On my way | 在路上 | 无 | 信息性；头上 ping |
 | FollowMe | followme | Follow me | 跟着我 | 有 | `CCSBot.IsFollowing` + Leader=人类 |
 | FollowingYou | followingyou | Following you | 跟着你 | 有 | 人类声明自己在跟；Bot 不必动 |
-| GoA | aplan | Ping Site A | 侦测 A 点 | 无（静音 ping） | **开局 3/2 主入口**；局中=执行/转 A |
+| GoA | aplan | Ping Site A | 侦测 A 点 | 无（静音 ping） | **15s 后廉价选点主入口**（经仲裁）；不是 Follow |
 | GoB | bplan | Ping Site B | 侦测 B 点 | 无（静音 ping） | 同上，B |
 | GoToLocMid | midplan | Ping Middle | 侦测中路 | 无（静音 ping） | 第三人称目标：lurk/控中，不要清掉 A/B |
 
@@ -266,8 +311,8 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 | CoveringYou | coveringyou | Covering you | 在掩护你 | 无 | 信息性 |
 | SectorClear | sectorclear | Area clear | 区域安全 | 有 | **局中转点**：Clear 喊话者所在点 |
 | ISeeBomb | bombcarrierspotted | Bomb carrier spotted | 发现炸弹携带者 | 无 | 指南里和 BombCarrierHere 共用文本；实机 Slot 需确认是否同槽 |
-| wePlanted | planted | We planted the bomb | 我们已经安放炸弹 | 无 | T 告知已下；CT 应立即当 planted（仍缺 A/B 则等 ping/蜂鸣） |
-| PickedUpC4 | bombpickedup | Bomb picked up | 捡起炸弹 | 无 | 取消掉包事实 |
+| wePlanted | planted | We planted the bomb | 我们已经安放炸弹 | 无 | 口头假事实，**忽略**；只认 `bomb_planted` |
+| PickedUpC4 | bombpickedup | Bomb picked up | 捡起炸弹 | 无 | 口头假事实，**忽略**；只认 `bomb_pickup` |
 | SeesHostagesBeingTaken | seehostagestaken | The hostages are being taken | 人质正在被解救中 | 无 | 人质图 |
 | BombsiteClear | bombsiteclear | Bombsite clear | 清除炸弹 / 点已清 | 有 | **比 SectorClear 更硬**：Clear 对应 Bombsite |
 | GuardingA | guardinga | I'm guarding A | 我在防守 A 点 | 无 | 信息性；Bot 可把该点当已有人看 |
@@ -279,13 +324,13 @@ BotAI 1.8.9 已经加速的是**引擎事件之后**：安放全队学到点、T
 | --- | --- | --- | --- | --- | --- |
 | IFixBomb | ifixbomb | I'll De/Activate Bomb | 我来拆除/激活炸弹 | 无 | 人类声明自己拆/下；Bot 去 Cover 而不是抢包 |
 | YouFixBomb | youfixbomb | You De/Activate Bomb | 你去拆除/激活炸弹 | 无 | 让最近有资格的 Bot 去拆/下 |
-| DroppedBomb | droppedbomb | Bomb was dropped | 炸弹已投掷 | 有 | 掉包事实；CT 可搜松包 |
+| DroppedBomb | droppedbomb | Bomb was dropped | 炸弹已投掷 | 有 | 口头假事实，**忽略**；只认 `bomb_dropped` 实体 |
 | GuardingDroppedBomb | guardingbomb | Guarding the Bomb | 保卫炸弹 | 无 | 信息性 |
-| BombAt | bombat | Ping Bomb | 侦测炸弹 | 无（静音 ping） | 松包/C4 位置；CT 搜 ping 点 |
-| WeHaveTheBomb | ihavethebomb | Bomb picked up | 捡起炸弹 | 无 | 同 PickedUpC4 |
-| PlantingAtA | plantingata | I'm planting at A | 我正在 A 点安放炸弹 | 无 | T 执行偏置；CT 当 A 即将下 |
-| PlantingAtB | plantingatb | I'm planting at B | 我正在 B 点安放炸弹 | 无 | 同上 B |
-| PlantedAtA | plantedata | I planted at A | 我已在 A 点安放炸弹 | 无 | **MarkBombsiteAsPlanted(A)**，覆盖开局 3/2 |
+| BombAt | bombat | Ping Bomb | 侦测炸弹 | 无（静音 ping） | 无线电忽略；**ping 命中包实体**才当事实 |
+| WeHaveTheBomb | ihavethebomb | Bomb picked up | 捡起炸弹 | 无 | 口头假事实，**忽略**；只认 `bomb_pickup` |
+| PlantingAtA | plantingata | I'm planting at A | 我正在 A 点安放炸弹 | 无 | 口头假事实，**忽略** |
+| PlantingAtB | plantingatb | I'm planting at B | 我正在 B 点安放炸弹 | 无 | 口头假事实，**忽略** |
+| PlantedAtA | plantedata | I planted at A | 我已在 A 点安放炸弹 | 无 | 口头假事实，**忽略**；只认 `bomb_planted` |
 | PlantedAtB | plantedatb | I planted at B | 我已在 B 点安放炸弹 | 无 | 同上 B |
 
 ### 回应 Responses（多数可不驱动走位）
@@ -371,7 +416,7 @@ CS2 上常失效或半残：
 | enemyspot | CW.SeesEnemy |
 | needrop | CW.NeedDrop（经典常失效；即便能到也不接 BotBuy） |
 
-开局 3/2 应同时认：`CW.GoA/GoB` ping、经典 `go_a/go_b`（若 Slot 还能到）、以及团队聊天里的「打A/打B」（可选，后做）。
+15s 后选点应同时认：`CW.GoA/GoB` ping、经典 `go_a/go_b`（若 Slot 还能到）。团队聊天「打A/打B」第一期不做。
 
 ---
 
@@ -381,13 +426,12 @@ CS2 上常失效或半残：
 
 ### 第一层：信息差（最贴你说的两个例子）
 
-1. **开局 GoA/GoB → 3/2：Rush + fake，空点立刻会合主攻点**（已拍板；5 人编制数字待确认）
-2. **PlantedAtA/B、wePlanted、BombAt ping → MarkBombsiteAsPlanted**  
-   人类已经看见下包，不必等蜂鸣。这是「Bot 还往空点走」的主因。
-3. **BombsiteClear / SectorClear → ClearBombsite(喊话者所在点或 ping 点)**  
-   人类说 B 空了，Bot 把 B 标清，自己的搜点 AI 会去下一个点。不要把人拖去人类身边。
-4. **DroppedBomb / Ping Bomb → 松包事实**  
-   CT 按现有搜包逻辑走，只是提早知道。
+1. **GoA/GoB（15s 后）→ 按人记账 + 仲裁全员去点**（3/2 已退役；1-1 不对半分）
+2. **`bomb_planted`、ping 命中包实体 → 包事实**  
+   口头 PlantedAt/wePlanted/DroppedBomb 忽略。人类 ping 到包实体时不必等蜂鸣。
+3. **BombsiteClear / SectorClear → 仅硬归属且包不在该点**  
+   离开该点。不要把人拖去人类身边。
+4. **地上的包 → CT HuntDropped；T 不 Rally**
 
 ### 第二层：队形/跟随（仍用 CCSBot 字段，不锁 WASD）
 
@@ -430,7 +474,7 @@ CS2 上常失效或半残：
 1. 实机打日志：人类轮盘 GoA/GoB、中键 ping、经典 `go`/`holdpos` 分别产生什么 `EventPlayerRadio.Slot`、`CPlayerPing.Type`、`PlaceName`。
 2. `libserver.so` dump：`CSGameState` 搜点顺序、`ClearBombsite`、`MarkBombsiteAsPlanted` 在 CS2 的偏移或函数。
 3. 确认 `CW.ISeeBomb` 是否真是独立槽，还是和 `BombCarrierHere` 撞文本。
-4. 冻结时间内轮盘是否已经进 `player_radio`（决定 10 秒窗口从哪算）。
+4. 冻结时间内轮盘是否已经进 `player_radio`（15 秒静默从 `round_start` 算，含冻结；此项只确认日志会不会在静默期内刷屏）。
 
 ---
 

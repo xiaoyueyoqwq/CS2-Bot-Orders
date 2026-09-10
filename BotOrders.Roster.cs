@@ -5,82 +5,38 @@ namespace BotOrders;
 
 internal sealed record RosterAssignment(
     IReadOnlyList<int> PrimarySlots,
-    IReadOnlyList<int> FakeSlots,
-    int LivingCount,
-    int FakeCount);
+    int LivingCount);
 
 internal static class OrderRoster
 {
-    internal static int ComputeFakeCount(int n)
+    internal static RosterAssignment AllBots(IReadOnlyList<CCSPlayerController> living)
     {
-        if (n < 4)
-            return 0;
-
-        int fake = Math.Min(Math.Max(2, n * 2 / 5), (n - 1) / 2);
-        if (n - fake <= fake)
-            fake = Math.Max(0, (n - 1) / 2);
-        if (n - fake <= fake)
-            return 0;
-        return fake;
+        var bots = living.Where(p => p.IsValid && p.IsBot).ToList();
+        bots.Sort((a, b) =>
+        {
+            bool aC4 = HasC4(a);
+            bool bC4 = HasC4(b);
+            if (aC4 != bC4)
+                return aC4 ? -1 : 1;
+            return a.Slot.CompareTo(b.Slot);
+        });
+        return new RosterAssignment(bots.Select(p => p.Slot).ToArray(), living.Count);
     }
 
-    internal static RosterAssignment Assign(
-        IReadOnlyList<CCSPlayerController> living,
-        CsTeam team)
+    internal static CCSPlayerController? BotC4Holder(IReadOnlyList<CCSPlayerController> living)
     {
-        var ordered = living
-            .Where(p => p.IsValid)
-            .OrderBy(p => p.Slot)
-            .ToList();
+        return living.FirstOrDefault(p => p.IsValid && p.IsBot && HasC4(p));
+    }
 
-        int n = ordered.Count;
-        int fakeCount = ComputeFakeCount(n);
-        int primaryCount = n - fakeCount;
+    internal static RosterAssignment None(int livingCount)
+    {
+        return new RosterAssignment(Array.Empty<int>(), livingCount);
+    }
 
-        var humans = ordered.Where(p => !p.IsBot).ToList();
-        var bots = ordered.Where(p => p.IsBot).ToList();
-
-        var primary = new List<CCSPlayerController>(primaryCount);
-        var fake = new List<CCSPlayerController>(fakeCount);
-
-        foreach (var human in humans)
-        {
-            if (primary.Count < primaryCount)
-                primary.Add(human);
-        }
-
-        CCSPlayerController? c4Bot = null;
-        if (team == CsTeam.Terrorist)
-        {
-            c4Bot = bots.FirstOrDefault(HasC4);
-            if (c4Bot != null && !primary.Contains(c4Bot) && primary.Count < primaryCount)
-                primary.Add(c4Bot);
-        }
-
-        foreach (var bot in bots)
-        {
-            if (primary.Contains(bot) || fake.Contains(bot))
-                continue;
-            if (primary.Count < primaryCount)
-                primary.Add(bot);
-            else
-                fake.Add(bot);
-        }
-
-        if (team == CsTeam.Terrorist && c4Bot != null && fake.Contains(c4Bot) && primary.Count > 0)
-        {
-            var swap = primary.LastOrDefault(p => p.IsBot && !HasC4(p)) ?? primary[^1];
-            primary.Remove(swap);
-            fake.Remove(c4Bot);
-            primary.Add(c4Bot);
-            fake.Add(swap);
-        }
-
-        return new RosterAssignment(
-            primary.Select(p => p.Slot).ToArray(),
-            fake.Select(p => p.Slot).ToArray(),
-            n,
-            fake.Count);
+    internal static ulong? HumanC4HolderSteamId(IReadOnlyList<CCSPlayerController> living)
+    {
+        var holder = living.FirstOrDefault(p => p.IsValid && !p.IsBot && HasC4(p));
+        return holder?.SteamID is ulong id && id != 0 ? id : null;
     }
 
     internal static bool HasC4(CCSPlayerController player)
