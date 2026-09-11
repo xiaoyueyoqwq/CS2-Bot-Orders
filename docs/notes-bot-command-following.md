@@ -1,7 +1,7 @@
 # Bot 听从人类指令 — 设计笔记（暂存）
 
-日期：2026-09-10  
-状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。0.1.6：中键一下 = LookAt 有情况；两下警告 `type=13 urgent=true` = LastEnemy + 架枪；不把 ping 写成 Goal。0.1.5：T 持包 Bot 名册排第一，AllGo 不因交火 skip，捡包立刻重算。0.1.4：收集绑 `EventRoundFreezeEnd`（15s 上限）；解冻立刻 flush；静默 5s 只挡已有票的改口，没票的解冻第一下仍收；冻结里有编制先 IgnoreRadio；HuntDropped 用丢包者坐标作后备。0.1.3：解冻后廉价口令静默 5s；同一人改 A/B 无冷却。0.1.2：人类编制压过 Hide/Follow/bot 互喊；死后票保持；接管后同一 SteamID 的轮盘算指挥；A/B 用碰撞盒中心（拒绝 0,0,0）。不写 T 搜点顺序。
+日期：2026-09-11  
+状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。0.1.7：标点只喂给离 ping ≤1500 的同队 Bot；远处不写 LookAt/LastEnemy；`ClearIfClose=false`。0.1.6：中键一下 = LookAt 有情况；两下警告 `type=13 urgent=true` = LastEnemy + 架枪；不把 ping 写成 Goal。0.1.5：T 持包 Bot 名册排第一，AllGo 不因交火 skip，捡包立刻重算。0.1.4：收集绑 `EventRoundFreezeEnd`（15s 上限）；解冻立刻 flush；静默 5s 只挡已有票的改口，没票的解冻第一下仍收；冻结里有编制先 IgnoreRadio；HuntDropped 用丢包者坐标作后备。0.1.3：解冻后廉价口令静默 5s；同一人改 A/B 无冷却。0.1.2：人类编制压过 Hide/Follow/bot 互喊；死后票保持；接管后同一 SteamID 的轮盘算指挥；A/B 用碰撞盒中心（拒绝 0,0,0）。不写 T 搜点顺序。
 
 方向已经对齐：不重写 Bot AI，也不用 BotController 锁住 WASD 当傀儡。  
 Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判断，而是服从。人类作判断，AI 执行。执行时仍走现有寻路/枪法/搜点，不另写一套走位。
@@ -61,14 +61,14 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 | 世界事实 | `bomb_planted`；地上 `weapon_c4`；ping 命中 `weapon_c4`/`planted_c4` | 不能 | 能。目标是包的坐标/已下的点 |
 | 已验证清点 | Clear 且喊的人 `LastPlaceName` 硬归属该点，且包不在这 | 难 | 只能把人从该点叫走 |
 | 廉价口令 | GoA/GoB（V 盘 / Z 无线电） | 按一下 | 仅无人反对（全票同一点或 2-1+） |
-| 标点信息 | 中键一下 / 两下警告 | 按一下 | **不能**。一下 LookAt「有情况」；两下 `type=13` LastEnemy「有人、架枪」。不写 Goal |
+| 标点信息 | 中键一下 / 两下警告 | 按一下 | **不能**。只告诉离 ping ≤1500 的 Bot：一下 LookAt「有情况」；两下 `type=13` LastEnemy「有人、架枪」。不写 Goal，远处编制不动 |
 | 口头假事实 | wePlanted、PlantedAt*、DroppedBomb、BombAt、PickedUpC4 无线电 | 按一下 | **忽略**，只认事件和实体 |
 
 注入「包在这个坐标」和「全员强制走过去」不是同一件事：
 
 - 已下包 / ping 命中包实体 / **CT** 见到地上的包 → 一期仍 HuntDropped 写包坐标。**代办（AI 审查）**：附近防守，不要钉在实体旁盯着看。这不是 BotOrders 的 Goal 能解决的。
 - **T 自己把包扔角落** → 记事实，**不**全员集结（否则丢包 = 最高权限指挥）。
-- 中键标点不是选点：`PlaceName` 是 BombsiteA/B 也不升成 GoSite。走位只认轮盘/无线电。
+- 中键标点不是选点：`PlaceName` 是 BombsiteA/B 也不升成 GoSite。走位只认轮盘/无线电。标点是附近感知，不是把全队 Goal 改去标记。
 
 ### 2.3 按人记账（不是投票、不是 last-wins）
 
@@ -447,7 +447,7 @@ CS2 上常失效或半残：
 ### 第三层：局部感知
 
 10. **HeardNoise / SeesEnemy / 单人/多人 / Sniper / 中键危险 ping**  
-    LookAtSpot + LastEnemy/Noise。这是最早提过的「危险标记」，现在排在炸弹事实后面。
+    附近 Bot 的 LookAtSpot + LastEnemy（中键已做，≤1500，不写 Noise/Goal）。这是最早提过的「危险标记」，现在排在炸弹事实后面。
 11. **GoToLocMid**  
     第三人称目标，不是第三炸弹点。少数人去中，多数仍按 A/B 拆分。
 12. **GuardingA/B**  

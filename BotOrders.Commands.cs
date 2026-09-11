@@ -50,6 +50,8 @@ internal static class OrderCommands
     public const int PingTypeWarning = 13;
     public const float AttentionLookSeconds = 5f;
     public const float EnemyLookSeconds = 8f;
+    public const float AlertNearbyUnits = 1500f;
+    public const float LookAtAngleTolerance = 20f;
 
     internal static bool IsUsableDest(float x, float y)
     {

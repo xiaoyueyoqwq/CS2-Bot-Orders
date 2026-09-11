@@ -4,19 +4,24 @@ using CounterStrikeSharp.API.Modules.Utils;
 
 namespace BotOrders;
 
+internal readonly record struct AlertResult(int Written, int Far, int Fight);
+
 /// <summary>
-/// Feeds ping XYZ as "something here" / "enemy here". Does not write
-/// GoalPosition or NoisePosition (those pull bots onto the marker).
+/// Feeds ping XYZ as "something here" / "enemy here" to nearby bots.
+/// Does not write GoalPosition or NoisePosition (those pull bots onto
+/// the marker). Far bots keep their current assignment.
 /// </summary>
 internal static class OrderAlert
 {
-    internal static int Apply(
+    internal static AlertResult Apply(
         IEnumerable<CCSPlayerController> livingBots,
         Vector dest,
         bool enemy,
         float duration)
     {
         int written = 0;
+        int far = 0;
+        int fight = 0;
         float now = Server.CurrentTime;
         foreach (var bot in livingBots)
         {
@@ -28,8 +33,18 @@ internal static class OrderAlert
             if (pawn == null || !pawn.IsValid || ccsBot == null)
                 continue;
 
-            if (ccsBot.IsAttacking || ccsBot.IsEnemyVisible)
+            var origin = pawn.AbsOrigin;
+            if (origin == null || Distance3(origin, dest) > OrderCommands.AlertNearbyUnits)
+            {
+                far++;
                 continue;
+            }
+
+            if (ccsBot.IsAttacking || ccsBot.IsEnemyVisible)
+            {
+                fight++;
+                continue;
+            }
 
             var look = ccsBot.LookAtSpot;
             if (look == null)
@@ -46,7 +61,9 @@ internal static class OrderAlert
             ref bool attack = ref ccsBot.LookAtSpotAttack;
             attack = enemy;
             ref bool clearIfClose = ref ccsBot.LookAtSpotClearIfClose;
-            clearIfClose = true;
+            clearIfClose = false;
+            ref float angle = ref ccsBot.LookAtSpotAngleTolerance;
+            angle = OrderCommands.LookAtAngleTolerance;
 
             if (enemy)
             {
@@ -67,6 +84,14 @@ internal static class OrderAlert
             written++;
         }
 
-        return written;
+        return new AlertResult(written, far, fight);
+    }
+
+    private static float Distance3(Vector a, Vector b)
+    {
+        float dx = a.X - b.X;
+        float dy = a.Y - b.Y;
+        float dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dy * dy + dz * dz);
     }
 }

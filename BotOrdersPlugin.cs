@@ -12,7 +12,7 @@ namespace BotOrders;
 public sealed class BotOrdersPlugin : BasePlugin
 {
     public override string ModuleName => "BotOrders";
-    public override string ModuleVersion => "0.1.6";
+    public override string ModuleVersion => "0.1.7";
     public override string ModuleAuthor => "xiaoyueyoqwq";
     public override string ModuleDescription =>
         "Bots follow human site orders (human radio beats hide/follow)";
@@ -213,7 +213,7 @@ public sealed class BotOrdersPlugin : BasePlugin
 
         bool enemy = type == OrderCommands.PingTypeWarning || urgent;
         var dest = new Vector(@event.X, @event.Y, @event.Z);
-        int written = OrderAlert.Apply(
+        var result = OrderAlert.Apply(
             LivingOn(player.Team).Where(p => p.IsBot),
             dest,
             enemy,
@@ -224,7 +224,7 @@ public sealed class BotOrdersPlugin : BasePlugin
             player.Team,
             place,
             dest,
-            written);
+            result);
         return HookResult.Continue;
     }
 

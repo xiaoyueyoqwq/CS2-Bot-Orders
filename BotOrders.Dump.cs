@@ -81,17 +81,20 @@ internal static class OrderDump
         CsTeam team,
         string place,
         Vector xyz,
-        int bots)
+        AlertResult result)
     {
         logger.LogInformation(
-            "[BotOrders] alert kind={Kind} team={Team} place={Place} xyz={X:0},{Y:0},{Z:0} bots={Bots}",
+            "[BotOrders] alert kind={Kind} team={Team} place={Place} xyz={X:0},{Y:0},{Z:0} bots={Bots} far={Far} fight={Fight} radius={Radius:0}",
             kind,
             team,
             place,
             xyz.X,
             xyz.Y,
             xyz.Z,
-            bots);
+            result.Written,
+            result.Far,
+            result.Fight,
+            OrderCommands.AlertNearbyUnits);
     }
 
     internal static void Silence(ILogger logger, CCSPlayerController player, string source, string place)
