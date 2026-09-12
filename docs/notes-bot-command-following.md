@@ -1,7 +1,7 @@
 # Bot 听从人类指令 — 设计笔记（暂存）
 
-日期：2026-09-11  
-状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。0.1.7：标点只喂给离 ping ≤1500 的同队 Bot；远处不写 LookAt/LastEnemy；`ClearIfClose=false`。0.1.6：中键一下 = LookAt 有情况；两下警告 `type=13 urgent=true` = LastEnemy + 架枪；不把 ping 写成 Goal。0.1.5：T 持包 Bot 名册排第一，AllGo 不因交火 skip，捡包立刻重算。0.1.4：收集绑 `EventRoundFreezeEnd`（15s 上限）；解冻立刻 flush；静默 5s 只挡已有票的改口，没票的解冻第一下仍收；冻结里有编制先 IgnoreRadio；HuntDropped 用丢包者坐标作后备。0.1.3：解冻后廉价口令静默 5s；同一人改 A/B 无冷却。0.1.2：人类编制压过 Hide/Follow/bot 互喊；死后票保持；接管后同一 SteamID 的轮盘算指挥；A/B 用碰撞盒中心（拒绝 0,0,0）。不写 T 搜点顺序。
+日期：2026-09-12  
+状态：开发仓为 `CS2-Bot-Orders`（独立仓库）。Improver 只做合包 vendoring，不当开发仓。0.1.9：C4 始终下发给该队全部活 Bot。CT 地上包 / ping 中包（无 A/B）全员 `GuardNearby`（绕包 280，MustRun）。T 死亡掉包：全图最近 1 人 Fetch，其余 Guard。1500 不再挡编制。T 活人扔包仍不 Rally。0.1.8：T **死亡**掉包曾限 1500 才进编制（远处不动，已废）。0.1.7：标点只喂给离 ping ≤1500 的同队 Bot；远处不写 LookAt/LastEnemy；`ClearIfClose=false`。0.1.6：中键一下 = LookAt 有情况；两下警告 `type=13 urgent=true` = LastEnemy + 架枪；不把 ping 写成 Goal。0.1.5：T 持包 Bot 名册排第一，AllGo 不因交火 skip，捡包立刻重算。0.1.4：收集绑 `EventRoundFreezeEnd`（15s 上限）；解冻立刻 flush；静默 5s 只挡已有票的改口，没票的解冻第一下仍收；冻结里有编制先 IgnoreRadio；HuntDropped 用丢包者坐标作后备。0.1.3：解冻后廉价口令静默 5s；同一人改 A/B 无冷却。0.1.2：人类编制压过 Hide/Follow/bot 互喊；死后票保持；接管后同一 SteamID 的轮盘算指挥；A/B 用碰撞盒中心（拒绝 0,0,0）。不写 T 搜点顺序。
 
 方向已经对齐：不重写 Bot AI，也不用 BotController 锁住 WASD 当傀儡。  
 Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判断，而是服从。人类作判断，AI 执行。执行时仍走现有寻路/枪法/搜点，不另写一套走位。
@@ -66,8 +66,10 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 
 注入「包在这个坐标」和「全员强制走过去」不是同一件事：
 
-- 已下包 / ping 命中包实体 / **CT** 见到地上的包 → 一期仍 HuntDropped 写包坐标。**代办（AI 审查）**：附近防守，不要钉在实体旁盯着看。这不是 BotOrders 的 Goal 能解决的。
-- **T 自己把包扔角落** → 记事实，**不**全员集结（否则丢包 = 最高权限指挥）。
+- 已下包 / ping 命中包实体 → 仍去该点 / Hunt 包坐标。
+- **CT 地上的包 / ping 中包（0.1.9）**：全员 GuardNearby（绕包 280，MustRun）。远处也来，不钉实体。
+- **T 死亡掉包（0.1.9）**：全图最近 1 人 Fetch，其余全员 GuardNearby。这是世界事实，档 20。
+- **T 自己把包扔角落（人还活着）** → 记事实，**不**全员集结（否则丢包 = 最高权限指挥）。
 - 中键标点不是选点：`PlaceName` 是 BombsiteA/B 也不升成 GoSite。走位只认轮盘/无线电。标点是附近感知，不是把全队 Goal 改去标记。
 
 ### 2.3 按人记账（不是投票、不是 last-wins）
@@ -82,8 +84,8 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 
 1. 已下包且点已知 → 全员该点。
 2. ping 命中包实体 → 有硬 A/B 则全员该点；否则 Hunt 包坐标（不猜 A/B）。
-3. 地上有包且 CT → 全员 HuntDropped。
-4. T 地上有包 → 不 Rally，继续口令结算。
+3. 地上有包且 CT → FetchAndGuard（近 1 捡、近守、远不动）。
+4. T 死亡掉包 → FetchAndGuard。T 活人丢包 → 不 Rally，继续口令结算。
 5. 活票 0 → 不注入。
 6. 全票同一点（1 个真人也算）→ 全员该点。这是主场景（1 人 + 4 Bot）。
 7. 2-1 及以上 → 多数点全员去。两人同意，第三人拦不住。
@@ -120,8 +122,8 @@ Bot 本来就会打 A/B、会搜点、会转点；缺的不是更强的自主判
 
 人数规则相同，任务不同。禁止把 T 的搜点顺序套到 CT。
 
-- T：无争议 Go A → 全员 Rush A。带着 `weapon_c4` 的 **Bot** 必须进这编制（名册第一、交火不 skip Goal），不能让持包的去乱走。C4 在真人身上时，1-1 破平用持包人的票。T 丢在地上的包不 Rally。
-- CT：无争议 Go A → 全员堆/转 A（不是假打进点）。1-1 不注入或保持上一拍。包已下 / ping 到包 / 地上的包 → 全员去。Clear 某点（包未下、硬归属）→ 离开该点。
+- T：无争议 Go A → 全员 Rush A。带着 `weapon_c4` 的 **Bot** 必须进这编制（名册第一、交火不 skip Goal），不能让持包的去乱走。C4 在真人身上时，1-1 破平用持包人的票。T **活人**丢包不 Rally；**死亡**掉包 1 捡 + 近守。
+- CT：无争议 Go A → 全员堆/转 A（不是假打进点）。1-1 不注入或保持上一拍。包已下 / ping 到包 → 全员去该点。地上的包 → 近 1 捡 + 近守，不跨图钉实体。Clear 某点（包未下、硬归属）→ 离开该点。
 
 ### 2.7 第一期范围
 
@@ -431,7 +433,7 @@ CS2 上常失效或半残：
    口头 PlantedAt/wePlanted/DroppedBomb 忽略。人类 ping 到包实体时不必等蜂鸣。
 3. **BombsiteClear / SectorClear → 仅硬归属且包不在该点**  
    离开该点。不要把人拖去人类身边。
-4. **地上的包 → CT HuntDropped；T 不 Rally**
+4. **地上的包 → CT FetchAndGuard（近 1 捡+近守）；T 死亡掉包同样；T 活人丢包不 Rally**
 
 ### 第二层：队形/跟随（仍用 CCSBot 字段，不锁 WASD）
 

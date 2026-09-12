@@ -12,7 +12,7 @@ namespace BotOrders;
 public sealed class BotOrdersPlugin : BasePlugin
 {
     public override string ModuleName => "BotOrders";
-    public override string ModuleVersion => "0.1.7";
+    public override string ModuleVersion => "0.1.9";
     public override string ModuleAuthor => "xiaoyueyoqwq";
     public override string ModuleDescription =>
         "Bots follow human site orders (human radio beats hide/follow)";
@@ -293,16 +293,25 @@ public sealed class BotOrdersPlugin : BasePlugin
 
     private HookResult OnBombDropped(EventBombDropped @event, GameEventInfo info)
     {
+        var dropper = @event.Userid;
+        bool dead = dropper == null
+                    || !dropper.PawnIsAlive
+                    || (dropper.PlayerPawn.Value?.Health ?? 0) <= 0;
         Logger.LogInformation(
-            "[BotOrders] bomb_dropped userid={Name}",
-            @event.Userid?.PlayerName ?? "?");
+            "[BotOrders] bomb_dropped userid={Name} dead={Dead}",
+            dropper?.PlayerName ?? "?",
+            dead);
 
         if (!_roundLive)
             return HookResult.Continue;
 
-        WorldPoint? dropPoint = WorldPoint.From(@event.Userid?.PlayerPawn.Value?.AbsOrigin);
+        WorldPoint? dropPoint = WorldPoint.From(dropper?.PlayerPawn.Value?.AbsOrigin);
         foreach (var state in _teams.Values)
+        {
             state.DroppedOrigin = dropPoint;
+            state.DeathDropped = dead;
+            state.FetchSlot = null;
+        }
 
         SetBombFact(
             new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown),
@@ -329,6 +338,8 @@ public sealed class BotOrdersPlugin : BasePlugin
             {
                 state.Bomb = BombFact.None;
                 state.DroppedOrigin = null;
+                state.DeathDropped = false;
+                state.FetchSlot = null;
                 OrderDump.BombFactLog(Logger, "event:bomb_pickup-clear-dropped", state.Bomb, state.Team);
                 clearedDropped = true;
             }
@@ -414,7 +425,11 @@ public sealed class BotOrdersPlugin : BasePlugin
 
             state.Bomb = fact;
             if (fact.Kind != BombKnowledge.DroppedEntity)
+            {
                 state.DroppedOrigin = null;
+                state.DeathDropped = false;
+                state.FetchSlot = null;
+            }
             OrderDump.BombFactLog(Logger, source, fact, state.Team);
             Recompute(state.Team);
         }
@@ -477,11 +492,29 @@ public sealed class BotOrdersPlugin : BasePlugin
             c4Holder,
             state.PrimarySite,
             state.HadAssignment,
-            state.ClearSite);
+            state.ClearSite,
+            state.DeathDropped);
 
-        var roster = resolution.AssignAllBots
-            ? OrderRoster.AllBots(living)
-            : OrderRoster.None(living.Count);
+        RosterAssignment roster;
+        if (resolution.Action == ResolutionAction.FetchAndGuard)
+        {
+            if (OrderInject.TryDropOrigin(state, out var dest, out _))
+            {
+                roster = OrderRoster.FetchAndGuard(
+                    living,
+                    dest,
+                    state.FetchSlot,
+                    allowFetch: team == CsTeam.Terrorist,
+                    out int? fetchSlot);
+                state.FetchSlot = fetchSlot;
+            }
+            else
+                roster = OrderRoster.None(living.Count);
+        }
+        else if (resolution.AssignAllBots)
+            roster = OrderRoster.AllBots(living);
+        else
+            roster = OrderRoster.None(living.Count);
 
         state.ApplyResolution(resolution, roster);
         OrderDump.Resolve(Logger, state);
@@ -582,7 +615,7 @@ public sealed class BotOrdersPlugin : BasePlugin
         {
             string ballots = string.Join(',', state.Ballots.Values.Select(b => $"{b.SteamId}:{b.Site}"));
             info.ReplyToCommand(
-                $"  {state.Team} rank={state.Rank} action={state.Current.Action} primary={state.PrimarySite} reason={state.Current.Reason} bomb={state.Bomb.Kind}/{state.Bomb.Site} clear={state.ClearSite} had={state.HadAssignment} ballots=[{ballots}] slots=[{string.Join(',', state.PrimarySlots)}]");
+                $"  {state.Team} rank={state.Rank} action={state.Current.Action} primary={state.PrimarySite} reason={state.Current.Reason} bomb={state.Bomb.Kind}/{state.Bomb.Site} deathDrop={state.DeathDropped} had={state.HadAssignment} ballots=[{ballots}] fetch=[{string.Join(',', state.PrimarySlots)}] guard=[{string.Join(',', state.GuardSlots)}]");
         }
     }
 

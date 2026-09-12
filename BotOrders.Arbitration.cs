@@ -21,6 +21,7 @@ internal enum ResolutionAction : byte
     AllGo,
     KeepPrevious,
     HuntDropped,
+    FetchAndGuard,
     LeaveSite,
 }
 
@@ -45,7 +46,8 @@ internal static class OrderArbitration
         ulong? humanC4HolderSteamId,
         Bombsite previousPrimary,
         bool hadAssignment,
-        Bombsite clearSite)
+        Bombsite clearSite,
+        bool deathDropped)
     {
         if (bomb.Kind == BombKnowledge.Planted && bomb.Site != Bombsite.Unknown)
         {
@@ -82,9 +84,20 @@ internal static class OrderArbitration
                 OrderRanks.BombFact,
                 OrderKind.PingBomb,
                 Bombsite.Unknown,
-                ResolutionAction.HuntDropped,
+                ResolutionAction.FetchAndGuard,
                 AssignAllBots: true,
-                Reason: "ping-bomb-hunt");
+                Reason: "ping-bomb-hold");
+        }
+
+        if (bomb.Kind == BombKnowledge.DroppedEntity && teamIsTerrorist && deathDropped)
+        {
+            return new Resolution(
+                OrderRanks.BombFact,
+                OrderKind.DroppedBomb,
+                Bombsite.Unknown,
+                ResolutionAction.FetchAndGuard,
+                AssignAllBots: true,
+                Reason: "t-death-drop-fetch-guard");
         }
 
         if (bomb.Kind == BombKnowledge.DroppedEntity && !teamIsTerrorist)
@@ -93,9 +106,9 @@ internal static class OrderArbitration
                 OrderRanks.BombFact,
                 OrderKind.DroppedBomb,
                 Bombsite.Unknown,
-                ResolutionAction.HuntDropped,
+                ResolutionAction.FetchAndGuard,
                 AssignAllBots: true,
-                Reason: "ct-dropped-hunt");
+                Reason: "ct-dropped-hold");
         }
 
         if (clearSite != Bombsite.Unknown
@@ -228,82 +241,87 @@ internal static class OrderArbitration
 
         Case(
             "planted-B",
-            Resolve(none, new BombFact(BombKnowledge.Planted, Bombsite.B), true, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(none, new BombFact(BombKnowledge.Planted, Bombsite.B), true, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.B, OrderRanks.BombFact, true);
 
         Case(
             "one-human-A",
-            Resolve(oneA, BombFact.None, true, 1, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneA, BombFact.None, true, 1, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
             "two-agree-A",
-            Resolve(twoA, BombFact.None, true, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(twoA, BombFact.None, true, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
             "tie-T-c4-holder-A",
-            Resolve(oneEach, BombFact.None, true, 1, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneEach, BombFact.None, true, 1, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
             "tie-CT-no-previous",
-            Resolve(oneEach, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneEach, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.NoInject, Bombsite.Unknown, OrderRanks.NoInject, false);
 
         Case(
             "tie-CT-keep-A",
-            Resolve(oneEach, BombFact.None, false, null, Bombsite.A, true, Bombsite.Unknown),
+            Resolve(oneEach, BombFact.None, false, null, Bombsite.A, true, Bombsite.Unknown, false),
             ResolutionAction.KeepPrevious, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
             "majority-2A-1B",
-            Resolve(twoAoneB, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(twoAoneB, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
             "T-dropped-no-rally-falls-to-uncontested",
-            Resolve(oneA, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), true, 1, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneA, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), true, 1, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.A, OrderRanks.SiteClaim, true);
 
         Case(
-            "T-dropped-no-ballots",
-            Resolve(none, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), true, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            "T-alive-drop-no-ballots",
+            Resolve(none, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), true, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.NoInject, Bombsite.Unknown, OrderRanks.NoInject, false);
 
         Case(
-            "CT-dropped-hunt",
-            Resolve(oneEach, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), false, null, Bombsite.Unknown, false, Bombsite.Unknown),
-            ResolutionAction.HuntDropped, Bombsite.Unknown, OrderRanks.BombFact, true);
+            "T-death-drop-no-ballots",
+            Resolve(none, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), true, null, Bombsite.Unknown, false, Bombsite.Unknown, true),
+            ResolutionAction.FetchAndGuard, Bombsite.Unknown, OrderRanks.BombFact, true);
+
+        Case(
+            "CT-dropped-hold",
+            Resolve(oneEach, new BombFact(BombKnowledge.DroppedEntity, Bombsite.Unknown), false, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
+            ResolutionAction.FetchAndGuard, Bombsite.Unknown, OrderRanks.BombFact, true);
 
         Case(
             "ping-bomb-B",
-            Resolve(oneEach, new BombFact(BombKnowledge.PingedEntity, Bombsite.B), false, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneEach, new BombFact(BombKnowledge.PingedEntity, Bombsite.B), false, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.AllGo, Bombsite.B, OrderRanks.BombFact, true);
 
         Case(
-            "ping-bomb-no-site-hunts",
-            Resolve(oneA, new BombFact(BombKnowledge.PingedEntity, Bombsite.Unknown), true, 1, Bombsite.Unknown, false, Bombsite.Unknown),
-            ResolutionAction.HuntDropped, Bombsite.Unknown, OrderRanks.BombFact, true);
+            "ping-bomb-no-site-hold",
+            Resolve(oneA, new BombFact(BombKnowledge.PingedEntity, Bombsite.Unknown), true, 1, Bombsite.Unknown, false, Bombsite.Unknown, false),
+            ResolutionAction.FetchAndGuard, Bombsite.Unknown, OrderRanks.BombFact, true);
 
         Case(
             "planted-no-site-hunts",
-            Resolve(none, new BombFact(BombKnowledge.Planted, Bombsite.Unknown), false, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(none, new BombFact(BombKnowledge.Planted, Bombsite.Unknown), false, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.HuntDropped, Bombsite.Unknown, OrderRanks.BombFact, true);
 
         Case(
             "no-ballots",
-            Resolve(none, BombFact.None, true, null, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(none, BombFact.None, true, null, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.NoInject, Bombsite.Unknown, OrderRanks.NoInject, false);
 
         Case(
             "tie-T-c4-holder-silent",
-            Resolve(oneEach, BombFact.None, true, 99, Bombsite.Unknown, false, Bombsite.Unknown),
+            Resolve(oneEach, BombFact.None, true, 99, Bombsite.Unknown, false, Bombsite.Unknown, false),
             ResolutionAction.NoInject, Bombsite.Unknown, OrderRanks.NoInject, false);
 
         Case(
             "verified-clear-B",
-            Resolve(none, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.B),
+            Resolve(none, BombFact.None, false, null, Bombsite.Unknown, false, Bombsite.B, false),
             ResolutionAction.LeaveSite, Bombsite.A, OrderRanks.SiteClear, true);
 
         return fail;

@@ -5,7 +5,11 @@ CounterStrikeSharp plugin that makes CS2 bots follow human site orders
 bot brain (`CSGameState` / `CCSBot`); it does not puppet WASD, does not
 `Follow` players, and does not rewrite aim, pathing, or economy.
 
-0.1.7 feeds a ping only to teammates within 1500 units of the marker
+0.1.9 always assigns a known loose C4 to every living bot on that team:
+CT all `GuardNearby` (~280 off the entity, MustRun); T death-drop
+picks the map-nearest fetcher and the rest guard. Distance 1500 no
+longer gates who is told. A living T dropping the bomb still does not
+rally. 0.1.7 feeds a ping only to teammates within 1500 units of the marker
 (`LookAtSpot` / `LastEnemyPosition`); far bots keep their site
 assignment. 0.1.6 treats a middle-click ping as "something here" (`LookAtSpot`) and
 a warning double-ping (`type=13 urgent=true`) as "enemy here, hold"

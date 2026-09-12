@@ -15,6 +15,15 @@ internal static class OrderInject
 {
     internal static InjectKind KindFor(RoundTeamState state, CCSPlayerController bot)
     {
+        if (state.Current.Action == ResolutionAction.FetchAndGuard)
+        {
+            if (state.PrimarySlots.Contains(bot.Slot))
+                return InjectKind.FetchDropped;
+            if (state.GuardSlots.Contains(bot.Slot))
+                return InjectKind.GuardNearby;
+            return InjectKind.None;
+        }
+
         if (!state.Current.AssignAllBots && state.Current.Action != ResolutionAction.HuntDropped)
             return InjectKind.None;
 
@@ -48,8 +57,8 @@ internal static class OrderInject
         {
             if (assign)
             {
-                state.ApplyRoster(OrderRoster.AllBots(livingList));
-                ArmIgnoreRadio(livingList);
+                ApplyTeamRoster(state, livingList);
+                ArmIgnoreRadio(livingList.Where(InDroppedRoster(state)));
             }
             else
                 ClearOverride(livingList);
@@ -62,7 +71,7 @@ internal static class OrderInject
             return;
         }
 
-        state.ApplyRoster(OrderRoster.AllBots(livingList));
+        ApplyTeamRoster(state, livingList);
         bool openingRush = OrderCommands.IsInTacticalSilence(clock.FreezeEnd, now, clock.FreezeEnded);
 
         foreach (var bot in livingList)
@@ -71,10 +80,15 @@ internal static class OrderInject
                 continue;
 
             var kind = KindFor(state, bot);
-            if (kind == InjectKind.None)
-                continue;
-
             var pawn = bot.PlayerPawn.Value;
+            if (kind == InjectKind.None)
+            {
+                if (state.Current.Action == ResolutionAction.FetchAndGuard
+                    && pawn != null && pawn.IsValid)
+                    SetIgnoreRadio(pawn, false);
+                continue;
+            }
+
             var ccsBot = pawn?.Bot;
             if (pawn == null || !pawn.IsValid || ccsBot == null)
             {
@@ -94,13 +108,13 @@ internal static class OrderInject
                 continue;
             }
 
-            if (!TryDestination(kind, state, out var dest, out Bombsite destSite, out string destSource))
+            if (!TryDestination(kind, state, bot.Slot, out var dest, out Bombsite destSite, out string destSource))
             {
                 LogSkip(logger, skipLogged, log, bot, kind, state.PrimarySite, "no-dest", state.Current.Reason);
                 continue;
             }
 
-            WriteGoal(pawn, ccsBot, dest);
+            WriteGoal(pawn, ccsBot, dest, hurry: true);
             bool hadSkip = ClearSkips(skipLogged, bot.Slot);
             if (log || hadSkip)
             {
@@ -110,6 +124,7 @@ internal static class OrderInject
                     kind,
                     destSite,
                     dest,
+                    pawn.AbsOrigin,
                     state.Current.Reason,
                     ccsBot.IsFollowing,
                     ReadIgnoreRadio(pawn),
@@ -155,6 +170,7 @@ internal static class OrderInject
     private static bool TryDestination(
         InjectKind kind,
         RoundTeamState state,
+        int slot,
         out Vector dest,
         out Bombsite destSite,
         out string destSource)
@@ -162,30 +178,84 @@ internal static class OrderInject
         dest = new Vector();
         destSite = state.PrimarySite;
         destSource = "none";
-        if (kind == InjectKind.HuntDropped)
+        if (kind is InjectKind.HuntDropped or InjectKind.FetchDropped or InjectKind.GuardNearby)
         {
             destSite = Bombsite.Unknown;
-            if (OrderSites.TryC4Origin(out dest))
+            if (!TryDropOrigin(state, out dest, out destSource))
+                return false;
+            if (kind == InjectKind.GuardNearby)
             {
-                destSource = "c4";
-                return true;
+                dest = OffsetAround(dest, slot);
+                destSource = destSource == "c4" ? "c4-offset" : "dropper-offset";
             }
 
-            if (state.DroppedOrigin is WorldPoint point && point.IsUsable)
-            {
-                dest = point.ToVector();
-                destSource = "dropper-origin";
-                return true;
-            }
-
-            return false;
+            return true;
         }
 
         destSource = "bombsite";
         return OrderSites.TryBombsiteOrigin(state.PrimarySite, out dest);
     }
 
-    private static void WriteGoal(CCSPlayerPawn pawn, CCSBot bot, Vector dest)
+    private static void ApplyTeamRoster(
+        RoundTeamState state,
+        IReadOnlyList<CCSPlayerController> livingList)
+    {
+        if (state.Current.Action == ResolutionAction.FetchAndGuard)
+        {
+            if (TryDropOrigin(state, out var dest, out _))
+            {
+                var roster = OrderRoster.FetchAndGuard(
+                    livingList,
+                    dest,
+                    state.FetchSlot,
+                    allowFetch: state.Team == CsTeam.Terrorist,
+                    out int? fetchSlot);
+                state.FetchSlot = fetchSlot;
+                state.ApplyRoster(roster);
+            }
+            else
+                state.ApplyRoster(OrderRoster.None(livingList.Count));
+            return;
+        }
+
+        state.ApplyRoster(OrderRoster.AllBots(livingList));
+    }
+
+    private static Func<CCSPlayerController, bool> InDroppedRoster(RoundTeamState state)
+    {
+        return bot => state.PrimarySlots.Contains(bot.Slot) || state.GuardSlots.Contains(bot.Slot);
+    }
+
+    internal static bool TryDropOrigin(RoundTeamState state, out Vector dest, out string destSource)
+    {
+        dest = new Vector();
+        destSource = "none";
+        if (OrderSites.TryC4Origin(out dest))
+        {
+            destSource = "c4";
+            return true;
+        }
+
+        if (state.DroppedOrigin is WorldPoint point && point.IsUsable)
+        {
+            dest = point.ToVector();
+            destSource = "dropper-origin";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Vector OffsetAround(Vector origin, int slot)
+    {
+        float angle = slot * 2.3999632f;
+        return new Vector(
+            origin.X + MathF.Cos(angle) * OrderCommands.GuardOffsetUnits,
+            origin.Y + MathF.Sin(angle) * OrderCommands.GuardOffsetUnits,
+            origin.Z);
+    }
+
+    private static void WriteGoal(CCSPlayerPawn pawn, CCSBot bot, Vector dest, bool hurry)
     {
         var goal = bot.GoalPosition;
         if (goal != null)
@@ -201,8 +271,12 @@ internal static class OrderInject
         stopping = false;
 
         Expire(bot.RepathTimer);
-        Start(bot.MustRunTimer, OrderCommands.MustRunSeconds);
-        Start(bot.HurryTimer, OrderCommands.MustRunSeconds);
+        if (hurry)
+        {
+            Start(bot.MustRunTimer, OrderCommands.MustRunSeconds);
+            Start(bot.HurryTimer, OrderCommands.MustRunSeconds);
+        }
+
         SetIgnoreRadio(pawn, true);
     }
 

@@ -167,7 +167,7 @@ internal static class OrderDump
     {
         string ballots = string.Join(',', state.Ballots.Values.Select(b => $"{b.SteamId}:{b.Site}"));
         logger.LogInformation(
-            "[BotOrders] resolve team={Team} rank={Rank} kind={Kind} action={Action} primary={Primary} assignAll={Assign} reason={Reason} bomb={BombKind}/{BombSite} clear={Clear} ballots=[{Ballots}] slots=[{Slots}]",
+            "[BotOrders] resolve team={Team} rank={Rank} kind={Kind} action={Action} primary={Primary} assignAll={Assign} reason={Reason} bomb={BombKind}/{BombSite} deathDrop={Death} clear={Clear} ballots=[{Ballots}] fetch=[{Fetch}] guard=[{Guard}]",
             state.Team,
             state.Current.Rank,
             state.Current.Kind,
@@ -177,9 +177,11 @@ internal static class OrderDump
             state.Current.Reason,
             state.Bomb.Kind,
             state.Bomb.Site,
+            state.DeathDropped,
             state.ClearSite,
             ballots,
-            string.Join(',', state.PrimarySlots));
+            string.Join(',', state.PrimarySlots),
+            string.Join(',', state.GuardSlots));
     }
 
     internal static void ExpireClaim(ILogger logger, CsTeam team, ulong steamId, string why)
@@ -228,6 +230,7 @@ internal static class OrderDump
         InjectKind kind,
         Bombsite dest,
         Vector xyz,
+        Vector? botOrigin,
         string reason,
         bool follow,
         bool ignoreRadio,
@@ -235,7 +238,7 @@ internal static class OrderDump
         bool carriesC4)
     {
         logger.LogInformation(
-            "[BotOrders] inject bot={Name} slot={Slot} kind={Kind} dest={Dest} xyz={X:0},{Y:0},{Z:0} team={Team} reason={Reason} follow={Follow} ignoreRadio={IgnoreRadio} destSource={DestSource} c4={C4}",
+            "[BotOrders] inject bot={Name} slot={Slot} kind={Kind} dest={Dest} xyz={X:0},{Y:0},{Z:0} botxyz={BX:0},{BY:0},{BZ:0} team={Team} reason={Reason} follow={Follow} ignoreRadio={IgnoreRadio} destSource={DestSource} c4={C4}",
             bot.PlayerName,
             bot.Slot,
             kind,
@@ -243,6 +246,9 @@ internal static class OrderDump
             xyz.X,
             xyz.Y,
             xyz.Z,
+            botOrigin?.X ?? 0,
+            botOrigin?.Y ?? 0,
+            botOrigin?.Z ?? 0,
             bot.Team,
             reason,
             follow,

@@ -18,7 +18,10 @@ internal sealed class RoundTeamState
         Reason: "init");
     public RosterAssignment? Roster { get; private set; }
     public HashSet<int> PrimarySlots { get; } = new();
+    public HashSet<int> GuardSlots { get; } = new();
     public WorldPoint? DroppedOrigin { get; set; }
+    public bool DeathDropped { get; set; }
+    public int? FetchSlot { get; set; }
 
     public int Rank => Current.Rank;
     public OrderKind Kind => Current.Kind;
@@ -77,8 +80,11 @@ internal sealed class RoundTeamState
     {
         Roster = assignment;
         PrimarySlots.Clear();
+        GuardSlots.Clear();
         foreach (int slot in assignment.PrimarySlots)
             PrimarySlots.Add(slot);
+        foreach (int slot in assignment.GuardSlots)
+            GuardSlots.Add(slot);
     }
 
     public IReadOnlyList<SiteBallot> LiveBallots()
@@ -102,6 +108,9 @@ internal sealed class RoundTeamState
             Reason: "wipe");
         Roster = null;
         PrimarySlots.Clear();
+        GuardSlots.Clear();
         DroppedOrigin = null;
+        DeathDropped = false;
+        FetchSlot = null;
     }
 }

@@ -51,6 +51,8 @@ internal static class OrderCommands
     public const float AttentionLookSeconds = 5f;
     public const float EnemyLookSeconds = 8f;
     public const float AlertNearbyUnits = 1500f;
+    public const float GuardNearbyUnits = 1500f;
+    public const float GuardOffsetUnits = 280f;
     public const float LookAtAngleTolerance = 20f;
 
     internal static bool IsUsableDest(float x, float y)
@@ -259,5 +261,7 @@ internal enum InjectKind : byte
     AllGoSite,
     RetakeSite,
     HuntDropped,
+    FetchDropped,
+    GuardNearby,
     LeaveSite,
 }
