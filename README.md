@@ -6,8 +6,6 @@ A [CounterStrikeSharp](https://github.com/roflmuffin/CounterStrikeSharp) plugin 
 
 Current version: **0.1.9**
 
-This is a standalone development repo. [CS2-Bot-Improver](https://github.com/xiaoyueyoqwq/CS2-Bot-Improver) is the combined distribution — do not develop this plugin on Improver feature branches.
-
 ## What it does
 
 - **Site orders.** Any living human on the team can claim A or B (V-wheel "Ping Site A/B", or remapped chatwheel entries). An uncontested claim — even a single human's — sends every living bot to that site. Majority votes win; a 1-1 tie never splits the team (on T, the human bomb-carrier's claim breaks the tie; otherwise the previous assignment holds or nothing is injected).
